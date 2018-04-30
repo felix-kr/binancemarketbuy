@@ -3,65 +3,71 @@ from binance.enums import *
 from binance.exceptions import BinanceAPIException
 import math
 import time
-# import win32api
 
-class InitOrder():
+class Order():
 
-    def __init__(self):
+    ########################################################################
+    # setting up args
+
+    def __init__(self, message):
         apikey = ""
         secretkey = ""
         self.client = Client(apikey, secretkey)
-
-        # gt = self.client.get_server_time()
-        # tt=time.gmtime(int((gt["serverTime"])/1000))
-        # win32api.SetSystemTime(tt[0],tt[1],0,tt[2],tt[3],tt[4],tt[5],0) # fix local time, find other fix
+        self.getargs(message)
+        self.checksymbol()
 
     def getargs(self, message): # basic check for number of arguments
-        self.args = message.split(" ")
-        if (len(self.args) != 2):
-            return False
+        args = message.split(" ")
+        if (len(args) != 2):
+            raise FormatError()
         else:
-            self.symbol = self.args[0].upper()
-            self.amount = float(self.args[1])
-            return True
+            self.symbol = args[0].upper()
+            self.usdamount = float(args[1])
 
     def checksymbol(self):
         if str(self.symbol.upper() + "USDT") in (x["symbol"] for x in self.client.get_ticker()):
             self.detour = False
             self.ticker = str(self.symbol + "USDT")
-            return True
         elif str(self.symbol.upper() + "BTC") in (x["symbol"] for x in self.client.get_ticker()):
             self.detour = True
             self.ticker = str(self.symbol + "BTC")
-            return True
+        else:
+            raise TickerError()
 
     ########################################################################
+    # order execution
 
     def executetransaction(self):
         if not self.detour:
-            self.directorder(self.ticker)
+            resp = self.directorder(self.ticker, self.usdamount)
         else:
-            self.detourorder(self.ticker)
-
-    def getquantity(self, ticker): # rounds down the number that will be bought
-        self.quantity = self.amount / float(self.price)
-        info = self.client.get_symbol_info(ticker)["filters"]
-        for x in range(len(info)):
-            if "stepSize" in info[x]:
-                stepsize = float(info[x]["stepSize"])
-        multiplier = stepsize ** -1
-
-        self.quantity = math.floor(self.quantity * multiplier) / multiplier
-
-    def directorder(self, ticker):
-        self.price = self.client.get_symbol_ticker(symbol = ticker)["price"]
-        self.getquantity(ticker)
-        resp = self.client.order_market_buy(symbol= ticker, quantity=self.quantity, newOrderRespType="FULL")
-        print(resp)
+            resp = self.detourorder(self.ticker)
         return resp
 
+    def directorder(self, ticker, amount):
+
+        def getquantity(ticker, amount=amount):
+            price = self.client.get_symbol_ticker(symbol = ticker)["price"]
+            info = self.client.get_symbol_info(ticker)["filters"]
+            for x in range(len(info)):
+                if "stepSize" in info[x]:
+                    stepsize = float(info[x]["stepSize"])
+            multiplier = stepsize ** -1
+            return math.floor((amount / float(price)) * multiplier) / multiplier
+
+        quantity = getquantity(ticker)
+        return self.client.order_market_buy(symbol=ticker, quantity=quantity, newOrderRespType="FULL")
+
     def detourorder(self, ticker):
-        detourorder = self.directorder("BTCUSDT") # min buy for BTCUSDT pair is 10$ -> triggers BinanceAPIException automatically, followuporder is not executed
-        self.amount = float(detourorder["executedQty"]) # reset amount for followup order
+        detourorder = self.directorder("BTCUSDT", self.usdamount) # min buy for BTCUSDT pair is 10$ -> triggers BinanceAPIException automatically, followuporder is not executed
+        print(detourorder)
+        quantity = float(detourorder["executedQty"]) # reset amount for followup order
         time.sleep(3)
-        followuporder = self.directorder(self.ticker)
+        return self.directorder(self.ticker, quantity)
+
+    ########################################################################
+    # sending info
+
+class FormatError(Exception): pass
+
+class TickerError(Exception): pass
